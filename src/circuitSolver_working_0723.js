@@ -54,14 +54,8 @@
         if (type === "Diode") {
             this.dark_current = dark_current;
             this.bias = true; //The default bias of the diode is forward
-            //this.value = 0.0001 / (dark_current * (Math.exp(40 * 0.0001) - 1));
-            this.value = 1;
+            this.value = 0.1 / (dark_current * (Math.exp(40 * 0.1) - 1));
             this.value_reverse = -10 / (dark_current * (Math.exp(-40 * 10) - 1));
-        }
-
-        if (type === "MOSFET") {
-            this.value = 1;
-            this.value_reverse = 1000000;
         }
     };
 
@@ -92,20 +86,19 @@
         return this.getImpedance(freq).inverse().negative();
     };
 
-    var VoltageSource = function (id, voltage, positiveNode, negativeNode, frequency, array) {
+    var VoltageSource = function (id, voltage, positiveNode, negativeNode, frequency) {
         this.id = id;
         this.voltage = voltage;
         this.positiveNode = positiveNode;
         this.negativeNode = negativeNode;
         this.frequency = frequency || 0;
-        this.array = array;
     };
 
     CiSo.prototype.addComponent = function (id, type, value, nodeLabels, dark_current,  value_reverse, bias) {
         var component = new Component(id, type, value, nodeLabels, dark_current, value_reverse, bias), // Make a new component with the right properties
 				i, ii, node;
 
-        if (component.type === "Transistor") { // modelling a BJT as a combination of two diodes
+        if (component.type === "Transistor") {
             var nodeLabels_diode_1 = [nodeLabels[1], nodeLabels[0]];
             var nodeLabels_diode_2 = [nodeLabels[1], nodeLabels[2]];
 
@@ -135,9 +128,6 @@
 
         else {
 
-            if (component.type === "MOSFET")
-                component = new Component(id, "Resistor", value, nodeLabels);
-
             // Push the new component onto the components array
             this.components.push(component);
 
@@ -153,8 +143,8 @@
         }
     };
 
-    CiSo.prototype.addVoltageSource = function (id, voltage, positiveNode, negativeNode, frequency, array) {
-        var source = new VoltageSource(id, voltage , positiveNode, negativeNode, frequency, array);
+    CiSo.prototype.addVoltageSource = function (id, voltage, positiveNode, negativeNode, frequency) {
+        var source = new VoltageSource(id, voltage , positiveNode, negativeNode, frequency);
         this.voltageSources.push(source);
 
         if (!this.nodeMap[positiveNode]) {
@@ -263,14 +253,7 @@
         }
 
         for (i = 0; i < sources.length; i++) {
-            if (sources[i].frequency >= 0)
-                this.ZMatrix[0][numNodes - 1 + i].real = (sources[i].voltage * Math.cos(twoPi * sources[i].frequency * time));
-            else
-                if (-1 * time * sources[i].frequency <= sources[i].array.length)
-                    this.ZMatrix[0][numNodes - 1 + i].real = (sources[i].array[-1 * Math.ceil(time * sources[i].frequency)]); //negative frequency implies that the input is a step input with each voltage staying constant for a time preiod equal to 1/|frequency|
-                else
-                    this.ZMatrix[0][numNodes - 1 + i].real = sources[i].voltage;
-
+            this.ZMatrix[0][numNodes - 1 + i].real = (sources[i].voltage * Math.cos(twoPi * sources[i].frequency * time));
             //alert("Multiplication factor is " + Math.cos(twoPi * sources[i].frequency * time));
         }
     };
@@ -368,13 +351,13 @@
 
         for (i = 0, ii = components.length; i < ii; i++) {
             component = components[i];
-            if (!(~nodes.indexOf(component.nodes[0]) && ~nodes.indexOf(component.nodes[1])) && component.type != "MOSFET" && component.type != "Transistor") {
+            if (!(~nodes.indexOf(component.nodes[0]) && ~nodes.indexOf(component.nodes[1])) && component.type != "Transistor") {
                 removeComponentFromNodeMap(component, component.nodes[0]);
                 removeComponentFromNodeMap(component, component.nodes[1]);
                 components[i] = null;
             }
 
-            else if (!(~nodes.indexOf(component.nodes[0]) && ~nodes.indexOf(component.nodes[1]) && ~nodes.indexOf(component.nodes[2])) && (component.type === "Transistor" || component.type === "MOSFET")) {
+            else if (!(~nodes.indexOf(component.nodes[0]) && ~nodes.indexOf(component.nodes[1]) && ~nodes.indexOf(component.nodes[2])) && component.type === "Transistor") {
                 removeComponentFromNodeMap(component, component.nodes[0]);
                 removeComponentFromNodeMap(component, component.nodes[1]);
                 removeComponentFromNodeMap(component, component.nodes[1]);
@@ -428,68 +411,7 @@
                 var time = this.time;
                 var value = component.value;
                 var value_reverse = component.value_reverse;
-
-                if (component.type === "Resistor" && nodes.length === 3) { // Indicates that the resistor is an abstraction of a MOSFET
-                    var gate = nodes[1];
-                    node2 = nodes[2];
-                    index2 = this.getNodeIndex(node2);
-                    index_gate = this.getNodeIndex(gate);
-
-                    if (index_gate != -1 && index2 != -1) {
-                        //alert("Voltage between positive and negative terminals of " + component.id + " is " + ((res.elements[0][index1]).real - (res.elements[0][index2]).real));
-                        if (((res.elements[0][index_gate]).real - (res.elements[0][index2]).real < 0 && (value < value_reverse)) || ((res.elements[0][index_gate]).real - (res.elements[0][index2]).real > 0 && (value > value_reverse))) {
-                            temp = value_reverse;
-                            value_reverse = value;
-                            value = temp;
-
-                            //alert("Component value is " + value);
-                            //alert("Component value_reverse is " + value_reverse);
-                            //alert("Bias is " + component.bias);
-                            check = true;
-                        }
-                    }
-
-                    else if (index_gate === -1) {
-                        //alert("Voltage between positive and negative terminals of " + component.id + " is " + (-(res.elements[0][index2]).real));
-                        if ((res.elements[0][index2].real > 0 && (value < value_reverse)) || (res.elements[0][index2].real < 0 && (value > value_reverse))) {
-                            temp = value_reverse;
-                            value_reverse = value;
-                            value = temp;
-
-                            //alert("Component value is " + value);
-                            //alert("Component value_reverse is " + value_reverse);
-                            //alert("Bias is " + component.bias);
-                            check = true;
-                        }
-                    }
-
-                    else if (index2 === -1) {
-                        //alert("Voltage between positive and negative terminals of " + component.id + " is " + (res.elements[0][index1]).real);
-                        if ((res.elements[0][index_gate].real < 0 && (value < value_reverse)) || (res.elements[0][index_gate].real > 0 && (value > value_reverse))) {
-                            temp = value_reverse;
-                            value_reverse = value;
-                            value = temp;
-
-                            //alert("Component value is " + value);
-                            //alert("Component value_reverse is " + value_reverse);
-                            //alert("Bias is " + component.bias);
-                            check = true;
-                        }
-                    }
-
-
-                    component.value = value;
-                    component.value_reverse = value_reverse;
-                    components[i] = component;
-                    this.cleanCircuit();
-                    this.createAMatrix();
-                    this.createZMatrix(time);
-                    aM = $M(this.AMatrix);
-                    zM = $M(this.ZMatrix);
-                    invAM = aM.inv();
-                    res = zM.x(invAM);
-                }
-                
+               
                 if (component.type === "Diode") {
                     //alert("Component value is " + value);
                     //alert("Component value_reverse is " + value_reverse);
@@ -566,67 +488,6 @@
                 var time = this.time;
                 var value_original;
 
-                if (component.type === "Resistor" && nodes.length === 3) {
-                    var gate = nodes[1];
-                    node2 = nodes[2];
-                    index2 = this.getNodeIndex(node2);
-                    index_gate = this.getNodeIndex(gate);
-
-                    if (index_gate != -1 && index2 != -1) {
-                        //alert("Voltage between positive and negative terminals of " + component.id + " is " + ((res.elements[0][index1]).real - (res.elements[0][index2]).real));
-                        if (((res.elements[0][index_gate]).real - (res.elements[0][index2]).real < 0 && (value < value_reverse)) || ((res.elements[0][index_gate]).real - (res.elements[0][index2]).real > 0 && (value > value_reverse))) {
-                            temp = value_reverse;
-                            value_reverse = value;
-                            value = temp;
-
-                            //alert("Component value is " + value);
-                            //alert("Component value_reverse is " + value_reverse);
-                            //alert("Bias is " + component.bias);
-                            check = true;
-                        }
-                    }
-
-                    else if (index_gate === -1) {
-                        //alert("Voltage between positive and negative terminals of " + component.id + " is " + (-(res.elements[0][index2]).real));
-                        if ((res.elements[0][index2].real > 0 && (value < value_reverse)) || (res.elements[0][index2].real < 0 && (value > value_reverse))) {
-                            temp = value_reverse;
-                            value_reverse = value;
-                            value = temp;
-
-                            //alert("Component value is " + value);
-                            //alert("Component value_reverse is " + value_reverse);
-                            //alert("Bias is " + component.bias);
-                            check = true;
-                        }
-                    }
-
-                    else if (index2 === -1) {
-                        //alert("Voltage between positive and negative terminals of " + component.id + " is " + (res.elements[0][index1]).real);
-                        if ((res.elements[0][index_gate].real < 0 && (value < value_reverse)) || (res.elements[0][index_gate].real > 0 && (value > value_reverse))) {
-                            temp = value_reverse;
-                            value_reverse = value;
-                            value = temp;
-
-                            //alert("Component value is " + value);
-                            //alert("Component value_reverse is " + value_reverse);
-                            //alert("Bias is " + component.bias);
-                            check = true;
-                        }
-                    }
-
-
-                    component.value = value;
-                    component.value_reverse = value_reverse;
-                    components[i] = component;
-                    this.cleanCircuit();
-                    this.createAMatrix();
-                    this.createZMatrix(time);
-                    aM = $M(this.AMatrix);
-                    zM = $M(this.ZMatrix);
-                    invAM = aM.inv();
-                    res = zM.x(invAM);
-                }
-
                 if (component.type === "Diode" && component.bias === false) {
                     value_original = component.value;
                     if (index1 != -1 && index2 != -1) {
@@ -676,7 +537,7 @@
                                 //alert("Component value is " + component.value);
                                 component.bias = true;
                             }
-                            
+
                             check = true;
                         }
                     }
